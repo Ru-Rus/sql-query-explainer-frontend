@@ -18,8 +18,14 @@ export async function explainQuery(query: string): Promise<ExplanationData> {
     if (res.status === 429) {
       throw new Error('Daily limit reached. Come back tomorrow!');
     }
-    const err = await res.json();
-    throw new Error(err.detail || 'Failed to explain query');
+    let detail = 'Failed to explain query';
+    try {
+      const err = await res.json();
+      detail = err.detail || detail;
+    } catch {
+      // response body wasn't JSON (e.g. proxy HTML error page)
+    }
+    throw new Error(detail);
   }
 
   return res.json();

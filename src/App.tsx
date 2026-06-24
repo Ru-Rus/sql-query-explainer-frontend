@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import QueryInput from './components/QueryInput';
 import Explanation from './components/Explanation';
+import Skeleton from './components/Skeleton';
 import { explainQuery, type ExplanationData } from './api';
-
-const DAILY_LIMIT = 10;
-const STORAGE_KEY = 'sql_explainer_usage';
+import { DAILY_LIMIT, STORAGE_KEY, HISTORY_KEY, MAX_HISTORY } from './constants';
 
 interface UsageData {
   date: string;
@@ -41,7 +40,7 @@ function saveUsage(usage: UsageData): void {
 
 function getHistory(): HistoryEntry[] {
   try {
-    const raw = localStorage.getItem('sql_explainer_history');
+    const raw = localStorage.getItem(HISTORY_KEY);
     if (!raw) return [];
     return JSON.parse(raw);
   } catch {
@@ -50,11 +49,51 @@ function getHistory(): HistoryEntry[] {
 }
 
 function saveHistory(history: HistoryEntry[]): void {
-  localStorage.setItem('sql_explainer_history', JSON.stringify(history));
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+}
+
+function exportAsMarkdown(result: ExplanationData, query: string): void {
+  const lines = [
+    `# SQL Query Analysis`,
+    ``,
+    `## Query`,
+    `\`\`\`sql`,
+    query,
+    `\`\`\``,
+    ``,
+    `## Explanation`,
+    result.explanation,
+    ``,
+  ];
+
+  if (result.performance_issues.length > 0) {
+    lines.push(`## Performance Issues`);
+    result.performance_issues.forEach(i => lines.push(`- ${i}`));
+    lines.push(``);
+  }
+
+  lines.push(`## ERD Description`);
+  lines.push(result.erd_description);
+  lines.push(``);
+
+  if (result.optimizations.length > 0) {
+    lines.push(`## Optimizations`);
+    result.optimizations.forEach(o => lines.push(`- ${o}`));
+    lines.push(``);
+  }
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'sql-analysis.md';
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function App() {
   const [result, setResult] = useState<ExplanationData | null>(null);
+  const [currentQuery, setCurrentQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [usage, setUsage] = useState<UsageData>(getUsage);
@@ -70,25 +109,32 @@ function App() {
       return;
     }
 
-    setLoading(true);
     setError('');
     setResult(null);
+    setCurrentQuery(query);
+
+    // Check history cache first — no API call needed
+    const cached = history.find(e => e.query.trim() === query.trim());
+    if (cached) {
+      setResult(cached.result);
+      return;
+    }
+
+    setLoading(true);
 
     try {
       const data = await explainQuery(query);
       setResult(data);
 
-      // Save to history (keep last 10)
       const entry: HistoryEntry = {
         query,
         result: data,
         timestamp: new Date().toLocaleString()
       };
-      const newHistory = [entry, ...history].slice(0, 10);
+      const newHistory = [entry, ...history].slice(0, MAX_HISTORY);
       setHistory(newHistory);
       saveHistory(newHistory);
 
-      // Increment usage count
       const newUsage = { date: getTodayString(), count: usage.count + 1 };
       setUsage(newUsage);
       saveUsage(newUsage);
@@ -102,6 +148,7 @@ function App() {
 
   const handleHistorySelect = (entry: HistoryEntry) => {
     setResult(entry.result);
+    setCurrentQuery(entry.query);
     setError('');
     setShowHistory(false);
   };
@@ -132,7 +179,7 @@ function App() {
 
         {error && <p className="text-red-500 mt-4 text-center font-medium">{error}</p>}
 
-        {/* History toggle */}
+        {/* History panel */}
         {history.length > 0 && (
           <div className="mt-6">
             <div className="flex justify-between items-center mb-3">
@@ -169,7 +216,23 @@ function App() {
           </div>
         )}
 
-        {result && <Explanation data={result} />}
+        {/* Loading skeleton */}
+        {loading && <Skeleton />}
+
+        {/* Result + export button */}
+        {result && !loading && (
+          <>
+            <div className="flex justify-end mt-8 mb-2">
+              <button
+                onClick={() => exportAsMarkdown(result, currentQuery)}
+                className="text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 px-4 py-2 rounded-lg transition-colors"
+              >
+                ⬇️ Export as Markdown
+              </button>
+            </div>
+            <Explanation data={result} />
+          </>
+        )}
       </div>
     </div>
   );
