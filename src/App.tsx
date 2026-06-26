@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import LZString from 'lz-string';
 import QueryInput from './components/QueryInput';
 import Explanation from './components/Explanation';
 import Skeleton from './components/Skeleton';
+import ThemeToggle from './components/ThemeToggle';
 import { explainQuery, type ExplanationData } from './api';
-import { DAILY_LIMIT, STORAGE_KEY, HISTORY_KEY, MAX_HISTORY } from './constants';
+import { DAILY_LIMIT, STORAGE_KEY, HISTORY_KEY, MAX_HISTORY, DEFAULT_QUERY } from './constants';
 
 interface UsageData {
   date: string;
@@ -52,6 +54,20 @@ function saveHistory(history: HistoryEntry[]): void {
   localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
 }
 
+function getInitialQuery(): string {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const compressed = params.get('q');
+    if (compressed) {
+      const decoded = LZString.decompressFromEncodedURIComponent(compressed);
+      return decoded || DEFAULT_QUERY;
+    }
+  } catch {
+    // fall through to default
+  }
+  return DEFAULT_QUERY;
+}
+
 function exportAsMarkdown(result: ExplanationData, query: string): void {
   const lines = [
     `# SQL Query Analysis`,
@@ -91,6 +107,12 @@ function exportAsMarkdown(result: ExplanationData, query: string): void {
   URL.revokeObjectURL(url);
 }
 
+function copyShareLink(query: string): void {
+  const compressed = LZString.compressToEncodedURIComponent(query);
+  const url = `${window.location.origin}${window.location.pathname}?q=${compressed}`;
+  navigator.clipboard.writeText(url).catch(() => {});
+}
+
 function App() {
   const [result, setResult] = useState<ExplanationData | null>(null);
   const [currentQuery, setCurrentQuery] = useState('');
@@ -99,9 +121,17 @@ function App() {
   const [usage, setUsage] = useState<UsageData>(getUsage);
   const [history, setHistory] = useState<HistoryEntry[]>(getHistory);
   const [showHistory, setShowHistory] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
+  const [dark, setDark] = useState(true);
 
   const triesLeft = DAILY_LIMIT - usage.count;
   const isLimitReached = triesLeft <= 0;
+  const initialQuery = getInitialQuery();
+
+  const toggleTheme = () => {
+    setDark(!dark);
+    document.documentElement.classList.toggle('dark', !dark);
+  };
 
   const handleExplain = async (query: string) => {
     if (isLimitReached) {
@@ -113,7 +143,7 @@ function App() {
     setResult(null);
     setCurrentQuery(query);
 
-    // Check history cache first — no API call needed
+    // Check history cache first
     const cached = history.find(e => e.query.trim() === query.trim());
     if (cached) {
       setResult(cached.result);
@@ -158,81 +188,104 @@ function App() {
     saveHistory([]);
   };
 
+  const handleShare = () => {
+    copyShareLink(currentQuery || initialQuery);
+    setShareCopied(true);
+    setTimeout(() => setShareCopied(false), 2000);
+  };
+
   return (
-    <div className="min-h-screen bg-gray-950 text-white p-8">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-4xl font-bold mb-2 text-center">🔍 AI SQL Query Explainer</h1>
-        <p className="text-center text-gray-400 mb-8">Paste your SQL query • Powered by Gemini</p>
+    <div className={dark ? 'dark' : ''}>
+      <div className="min-h-screen bg-gray-950 dark:bg-white text-white dark:text-gray-900 p-8 transition-colors">
+        <ThemeToggle dark={dark} onToggle={toggleTheme} />
 
-        {/* Usage counter */}
-        <div className="text-center mb-4">
-          {isLimitReached ? (
-            <p className="text-red-400 font-medium">❌ Daily limit reached — resets tomorrow</p>
-          ) : (
-            <p className="text-gray-500 text-sm">
-              {triesLeft} of {DAILY_LIMIT} free queries remaining today
-            </p>
-          )}
-        </div>
+        <div className="max-w-4xl mx-auto">
+          <h1 className="text-4xl font-bold mb-2 text-center">🔍 AI SQL Query Explainer</h1>
+          <p className="text-center text-gray-400 dark:text-gray-500 mb-8">
+            Paste your SQL query • Powered by Gemini
+          </p>
 
-        <QueryInput onExplain={handleExplain} loading={loading} disabled={isLimitReached} />
-
-        {error && <p className="text-red-500 mt-4 text-center font-medium">{error}</p>}
-
-        {/* History panel */}
-        {history.length > 0 && (
-          <div className="mt-6">
-            <div className="flex justify-between items-center mb-3">
-              <button
-                onClick={() => setShowHistory(!showHistory)}
-                className="text-blue-400 hover:text-blue-300 text-sm font-medium"
-              >
-                {showHistory ? '▲ Hide History' : `▼ Show History (${history.length})`}
-              </button>
-              {showHistory && (
-                <button
-                  onClick={handleClearHistory}
-                  className="text-red-400 hover:text-red-300 text-sm"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-
-            {showHistory && (
-              <div className="space-y-2">
-                {history.map((entry, i) => (
-                  <button
-                    key={i}
-                    onClick={() => handleHistorySelect(entry)}
-                    className="w-full text-left bg-gray-900 hover:bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 transition-colors"
-                  >
-                    <p className="text-green-400 font-mono text-sm truncate">{entry.query}</p>
-                    <p className="text-gray-500 text-xs mt-1">{entry.timestamp}</p>
-                  </button>
-                ))}
-              </div>
+          {/* Usage counter */}
+          <div className="text-center mb-4">
+            {isLimitReached ? (
+              <p className="text-red-400 font-medium">❌ Daily limit reached — resets tomorrow</p>
+            ) : (
+              <p className="text-gray-500 text-sm">
+                {triesLeft} of {DAILY_LIMIT} free queries remaining today
+              </p>
             )}
           </div>
-        )}
 
-        {/* Loading skeleton */}
-        {loading && <Skeleton />}
+          <QueryInput
+            onExplain={handleExplain}
+            loading={loading}
+            disabled={isLimitReached}
+            initialQuery={initialQuery}
+          />
 
-        {/* Result + export button */}
-        {result && !loading && (
-          <>
-            <div className="flex justify-end mt-8 mb-2">
-              <button
-                onClick={() => exportAsMarkdown(result, currentQuery)}
-                className="text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 px-4 py-2 rounded-lg transition-colors"
-              >
-                ⬇️ Export as Markdown
-              </button>
+          {error && <p className="text-red-500 mt-4 text-center font-medium">{error}</p>}
+
+          {/* History panel */}
+          {history.length > 0 && (
+            <div className="mt-6">
+              <div className="flex justify-between items-center mb-3">
+                <button
+                  onClick={() => setShowHistory(!showHistory)}
+                  className="text-blue-400 hover:text-blue-300 text-sm font-medium"
+                >
+                  {showHistory ? '▲ Hide History' : `▼ Show History (${history.length})`}
+                </button>
+                {showHistory && (
+                  <button
+                    onClick={handleClearHistory}
+                    className="text-red-400 hover:text-red-300 text-sm"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {showHistory && (
+                <div className="space-y-2">
+                  {history.map((entry, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleHistorySelect(entry)}
+                      className="w-full text-left bg-gray-900 dark:bg-gray-100 hover:bg-gray-800 dark:hover:bg-gray-200 border border-gray-700 dark:border-gray-300 rounded-lg px-4 py-3 transition-colors"
+                    >
+                      <p className="text-green-400 font-mono text-sm truncate">{entry.query}</p>
+                      <p className="text-gray-500 text-xs mt-1">{entry.timestamp}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-            <Explanation data={result} />
-          </>
-        )}
+          )}
+
+          {/* Loading skeleton */}
+          {loading && <Skeleton />}
+
+          {/* Result + action buttons */}
+          {result && !loading && (
+            <>
+              <div className="flex justify-end gap-3 mt-8 mb-2">
+                <button
+                  onClick={handleShare}
+                  className="text-sm text-gray-400 hover:text-white dark:hover:text-gray-900 border border-gray-700 dark:border-gray-400 hover:border-gray-500 px-4 py-2 rounded-lg transition-colors"
+                >
+                  {shareCopied ? '✅ Link Copied!' : '🔗 Share Query'}
+                </button>
+                <button
+                  onClick={() => exportAsMarkdown(result, currentQuery)}
+                  className="text-sm text-gray-400 hover:text-white dark:hover:text-gray-900 border border-gray-700 dark:border-gray-400 hover:border-gray-500 px-4 py-2 rounded-lg transition-colors"
+                >
+                  ⬇️ Export as Markdown
+                </button>
+              </div>
+              <Explanation data={result} />
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

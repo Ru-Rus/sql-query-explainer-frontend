@@ -2,21 +2,23 @@ import { sql } from '@codemirror/lang-sql';
 import { oneDark } from '@codemirror/theme-one-dark';
 import CodeMirror from '@uiw/react-codemirror';
 import { useState } from 'react';
+import { DEFAULT_QUERY } from '../constants';
 
 interface Props {
   onExplain: (query: string) => void;
   loading: boolean;
   disabled?: boolean;
+  initialQuery?: string;
 }
 
-export default function QueryInput({ onExplain, loading, disabled = false }: Props) {
-  const [query, setQuery] = useState(`SELECT * FROM Orders WHERE Status = 'Pending';`);
+export default function QueryInput({ onExplain, loading, disabled = false, initialQuery }: Props) {
+  const [query, setQuery] = useState(initialQuery || DEFAULT_QUERY);
 
   const isDisabled = loading || disabled;
 
   return (
-    <div className="bg-gray-900 p-6 rounded-xl border border-gray-700">
-      <div className="rounded-lg overflow-hidden border border-gray-700">
+    <div className="bg-gray-900 dark:bg-gray-100 p-6 rounded-xl border border-gray-700 dark:border-gray-300">
+      <div className="rounded-lg overflow-hidden border border-gray-700 dark:border-gray-300">
         <CodeMirror
           value={query}
           height="200px"
